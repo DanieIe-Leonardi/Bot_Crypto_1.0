@@ -3,14 +3,37 @@
 A single-file Python app that runs on your local laptop. It polls **real, live
 bid/ask quotes** for ETH, BTC, XRP and SOL from four exchanges (Binance,
 Coinbase, Kraken, OKX — free public endpoints, no accounts or API keys) and
-**paper-trades** the best cross-exchange spread into a local ledger.
+**paper-trades** the best cross-exchange spread into a local ledger — with a
+built-in **web dashboard** (`http://127.0.0.1:8899`) showing profit, equity
+curve, per-venue balances and the full trade ledger.
 
 - **100% paper.** There is no code path anywhere that can place a real order,
   move funds, or touch a wallet. The config refuses to start unless
   `"mode": "paper"`, and even that only gates the scanner itself.
 - Real data, real fees, honest accounting.
-- All state is local: `paper_state.json` (balances + stats, resumable) and
-  `paper_trades.csv` (append-only trade log).
+- All state is local: `paper_state.json` (balances + equity history, resumable)
+  and `paper_trades.csv` (append-only trade log) — both feed the dashboard.
+
+## Web dashboard (built in)
+
+While the scanner runs (not in `--once` mode), it serves a fully designed local
+dashboard at:
+
+    http://127.0.0.1:8899
+
+It shows, auto-refreshing every 5 s:
+
+- **KPI cards** — portfolio value, realized paper net, trade count + win rate,
+  net-positive spreads seen vs scans, best and worst trade
+- **Charts** — portfolio value over time, cumulative realized net over time,
+  trades + est. net per asset, net-spread (bps) distribution
+- **Per-venue balances** — paper cash and coin inventory (marked to market)
+- **Full trades ledger** — filterable by asset / text / profitable-only
+
+The server binds to `127.0.0.1` only — it is never reachable from outside the
+machine. Charts use Chart.js from a CDN; without internet the tables still
+work. Disable entirely with `--no-dashboard` or `"dashboard_enabled": false`
+(port/host configurable in `config.json`).
 
 ## Requirements
 
@@ -48,8 +71,10 @@ realized net.
 | `min_net_spread_bps` | only trade when net spread ≥ this (default 5 bps) |
 | `taker_fees_bps` | taker fee per venue in basis points; set to match your actual account tier |
 | `starting_cash_per_venue_usd` | paper cash per venue (default $1,000 each) |
-| `coin_seed_usd` |_sell-side coin inventory pre-positioned per venue, valued at first quote |
+| `coin_seed_usd` | sell-side coin inventory pre-positioned per venue, valued at first quote |
 | `state_file` / `trades_log` | local file names |
+| `dashboard_enabled` / `dashboard_host` / `dashboard_port` | built-in web dashboard (see above) |
+| `history_max_points` | equity-curve points kept (default 2000 ≈ 8 h at 15 s polls) |
 
 ## How the paper simulation models a trade
 

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Arbitrage — ETH · BTC · XRP · SOL</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
+        onerror="window.__chartFailed=true"></script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2129; --border:#2d333b;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff;
+    --green:#3fb950; --red:#f85149; --amber:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.45 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent)}
+  .wrap{max-width:1280px;margin:0 auto;padding:20px 24px 60px}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:14px;margin-bottom:20px}
+  header h1{font-size:20px;margin:0;font-weight:600;letter-spacing:.3px}
+  .badge{padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;
+         letter-spacing:.5px;background:rgba(63,185,80,.15);color:var(--green);
+         border:1px solid rgba(63,185,80,.4)}
+  .badge small{display:block;font-weight:500;color:var(--muted);font-size:10px}
+  .spacer{flex:1}
+  .clock{color:var(--muted);font-variant-numeric:tabular-nums;font-size:12px;text-align:right}
+  .clock b{color:var(--text)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+  .card .label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:6px}
+  .card .value{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+  .card .sub{font-size:11px;color:var(--muted);margin-top:2px}
+  .pos{color:var(--green)} .neg{color:var(--red)} .amber{color:var(--amber)}
+  .charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+  @media (max-width:900px){.charts{grid-template-columns:1fr}}
+  .chart-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px}
+  .chart-card h3{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--muted);
+                 text-transform:uppercase;letter-spacing:.6px}
+  .chart-box{position:relative;height:230px}
+  section h2{font-size:15px;margin:26px 0 10px;font-weight:600}
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+        border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--border);
+        font-variant-numeric:tabular-nums;white-space:nowrap}
+  th{background:var(--panel2);font-size:11px;text-transform:uppercase;
+     letter-spacing:.6px;color:var(--muted);font-weight:600;position:sticky;top:0}
+  tr:last-child td{border-bottom:none}
+  .scroll{max-height:420px;overflow:auto;border-radius:10px;border:1px solid var(--border);
+          scrollbar-width:thin}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .controls input,.controls select{background:var(--panel);color:var(--text);
+      border:1px solid var(--border);border-radius:8px;padding:6px 10px;font:inherit;font-size:13px}
+  .controls input:focus,.controls select:focus{outline:1px solid var(--accent)}
+  .controls .count{color:var(--muted);font-size:12px}
+  .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600}
+  .pill.g{background:rgba(63,185,80,.15);color:var(--green)}
+  .pill.r{background:rgba(248,81,73,.15);color:var(--red)}
+  footer{color:var(--muted);font-size:12px;margin-top:26px;line-height:1.6}
+  .tagbinance{color:#f0b90b} .tagcoinbase{color:#1652f0} .tagkraken{color:#7132f5} .tagokx{color:#c0c8d2}
+  .empty{color:var(--muted);padding:30px;text-align:center}
+  #chartlib{color:var(--amber);font-size:12px;margin:6px 0 12px;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Paper Arbitrage Scanner</h1>
+    <span class="badge"><small>MODE</small>PAPER — no real money</span>
+    <div class="spacer"></div>
+    <div class="clock">
+      <div>started <b id="started">—</b> · uptime <b id="uptime">—</b></div>
+      <div><b id="updated">—</b> <span id="tick"></span></div>
+    </div>
+  </header>
+
+  <div class="kpis">
+    <div class="card"><div class="label">Portfolio value</div>
+      <div class="value" id="k-value">—</div><div class="sub" id="k-cost">—</div></div>
+    <div class="card"><div class="label">Realized net (paper)</div>
+      <div class="value" id="k-net">—</div><div class="sub">sum of all closed trades</div></div>
+    <div class="card"><div class="label">Trades</div>
+      <div class="value" id="k-trades">0</div><div class="sub" id="k-winrate">—</div></div>
+    <div class="card"><div class="label">Net-positive spreads seen</div>
+      <div class="value" id="k-opps">—</div><div class="sub" id="k-scans">—</div></div>
+    <div class="card"><div class="label">Best trade</div>
+      <div class="value" id="k-best">—</div><div class="sub" id="k-best-meta">—</div></div>
+    <div class="card"><div class="label">Worst trade</div>
+      <div class="value" id="k-worst">—</div><div class="sub" id="k-worst-meta">—</div></div>
+  </div>
+
+  <div id="chartlib">Chart.js could not load (offline?) — the tables below still work.</div>
+  <div class="charts">
+    <div class="chart-card"><h3>Portfolio value (USD)</h3>
+      <div class="chart-box"><canvas id="c-value"></canvas></div></div>
+    <div class="chart-card"><h3>Cumulative realized net (USD)</h3>
+      <div class="chart-box"><canvas id="c-net"></canvas></div></div>
+    <div class="chart-card"><h3>Trades &amp; est. net by asset</h3>
+      <div class="chart-box"><canvas id="c-asset"></canvas></div></div>
+    <div class="chart-card"><h3>Trade net-spread distribution (bps)</h3>
+      <div class="chart-box"><canvas id="c-bps"></canvas></div></div>
+  </div>
+
+  <section>
+    <h2>Paper balances per venue</h2>
+    <table><thead><tr><th>Venue</th><th>Cash (USD)</th><th id="th-coins">Coin inventory</th></tr></thead>
+      <tbody id="venues"><tr><td colspan="3" class="empty">waiting for data…</td></tr></tbody></table>
+  </section>
+
+  <section>
+    <h2>Paper trades ledger</h2>
+    <div class="controls">
+      <select id="f-asset"><option value="">All assets</option></select>
+      <input id="f-search" type="search" placeholder="filter venue / anything…" size="24">
+      <label style="color:var(--muted);font-size:12px">
+        <input type="checkbox" id="f-prof" style="accent-color:var(--green)"> profitable only</label>
+      <span class="count" id="f-count"></span>
+    </div>
+    <div class="scroll">
+      <table><thead><tr>
+        <th>time (UTC)</th><th>asset</th><th>route</th><th>gross</th><th>net</th>
+        <th>size</th><th>coin</th><th>est. net</th></tr></thead>
+        <tbody id="trades"><tr><td colspan="8" class="empty">waiting for data…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Live data: Binance · Coinbase · Kraken · OKX public endpoints. OKX/USDT quotes treated as USD.
+    Everything on this page is a <b>paper</b> simulation held in <code>paper_state.json</code> /
+    <code>paper_trades.csv</code> on your laptop — there is no real-money code path in this build.
+    Dashboard is served loopback-only (<a href="http://127.0.0.1:8899">127.0.0.1:8899</a>), auto-refreshes every 5&nbsp;s.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const money = v => (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString("en-US", {maximumFractionDigits: 2});
+const money4 = v => (v < 0 ? "-" : "+") + "$" + Math.abs(v).toLocaleString("en-US", {minimumFractionDigits: 4, maximumFractionDigits: 4});
+const num = v => parseFloat(v);
+const cls = v => v >= 0 ? "pos" : "neg";
+
+let charts = {};
+function chart(id, cfg) {
+  if (window.__chartFailed || typeof Chart === "undefined") { $("chartlib").style.display = "block"; return null; }
+  if (charts[id]) { Object.assign(charts[id].data, cfg.data); charts[id].update("none"); return charts[id]; }
+  Chart.defaults.color = "#8b949e";
+  Chart.defaults.borderColor = "rgba(255,255,255,0.06)";
+  Chart.defaults.font.size = 11;
+  charts[id] = new Chart($(id), cfg);
+  return charts[id];
+}
+
+function venueTag(v){ return `<span class="tag${v}">${v}</span>`; }
+
+function asUTC(t){ return new Date(t.replace(" ", "T") + "Z"); }
+function uptimeStr(startIso){
+  if (!startIso) return "—";
+  let s = Math.max(0, (Date.now() - asUTC(startIso).getTime()) / 1000);
+  const d = Math.floor(s/86400); s -= d*86400;
+  const h = Math.floor(s/3600); s -= h*3600;
+  const m = Math.floor(s/60);
+  return (d ? d + "d " : "") + String(h).padStart(2,"0") + "h " + String(m).padStart(2,"0") + "m";
+}
+
+function renderKPIs(d){
+  const hist = d.history || [];
+  const last = hist.length ? hist[hist.length - 1] : null;
+
+  let cash = 0;
+  for (const v of Object.values(d.venues)) cash += v.cash;
+  const worth = last ? last.value : cash;
+
+  $("k-value").textContent = money(worth);
+  $("k-cost").textContent = `cash ${money(cash)} · coins ${money(worth - cash)}`;
+
+  const net = d.stats.realized_net_usd || 0;
+  const netEl = $("k-net");
+  netEl.textContent = money4(net);
+  netEl.className = "value " + cls(net);
+
+  const trades = d.trades || [];
+  const wins = trades.filter(t => num(t.est_net_usd) > 0).length;
+  $("k-trades").textContent = d.stats.trades ?? trades.length;
+  $("k-winrate").textContent = trades.length
+    ? `win rate ${(100 * wins / trades.length).toFixed(1)}% (${wins}/${trades.length})` : "no trades yet";
+
+  $("k-opps").textContent = d.stats.opportunities_seen ?? 0;
+  $("k-scans").textContent = `${d.stats.scans ?? 0} scans total`;
+
+  const nets = trades.map(t => num(t.est_net_usd));
+  if (nets.length) {
+    const bi = nets.indexOf(Math.max(...nets)), wi = nets.indexOf(Math.min(...nets));
+    const b = trades[bi], w = trades[wi];
+    $("k-best").textContent = money4(nets[bi]);  $("k-best").className = "value " + cls(nets[bi]);
+    $("k-best-meta").textContent = `${b.asset} · ${b.buy_venue}→${b.sell_venue} · ${b.time}`;
+    $("k-worst").textContent = money4(nets[wi]); $("k-worst").className = "value " + cls(nets[wi]);
+    $("k-worst-meta").textContent = `${w.asset} · ${w.buy_venue}→${w.sell_venue} · ${w.time}`;
+  }
+
+  $("started").textContent = d.started_at || "—";
+  $("uptime").textContent = uptimeStr(d.started_at);
+  $("updated").textContent = "updated " + d.now;
+}
+
+function renderCharts(d){
+  const hist = d.history || [];
+  const labels = hist.map(h => h.t.slice(11));
+  const vals = hist.map(h => h.value);
+  const nets = hist.map(h => h.net);
+
+  if (hist.length && typeof Chart !== "undefined" && !window.__chartFailed) {
+    chart("c-value", {
+      type: "line",
+      data: { labels, datasets: [{ data: vals, borderColor: "#58a6ff",
+        backgroundColor: "rgba(88,166,255,0.12)", fill: true, tension: .25,
+        pointRadius: 0, borderWidth: 2 }]},
+      options: { animation: false, plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => money(c.parsed.y) } } },
+        scales: { y: { ticks: { callback: v => "$" + Math.round(v).toLocaleString() } },
+                  x: { ticks: { maxTicksLimit: 8 } } } }
+    });
+    chart("c-net", {
+      type: "line",
+      data: { labels, datasets: [{ data: nets, borderColor: "#3fb950",
+        backgroundColor: "rgba(63,185,80,0.10)", fill: true, tension: .25,
+        pointRadius: 0, borderWidth: 2 }]},
+      options: { animation: false, plugins: { legend: { display: false },
+        tooltip: { callbacks: { label: c => money4(c.parsed.y) } } },
+        scales: { y: { ticks: { callback: v => "$" + (+v).toFixed(1) } },
+                  x: { ticks: { maxTicksLimit: 8 } } } }
+    });
+  }
+
+  // per-asset: trades count + est net
+  const assets = d.assets || [];
+  const byAsset = {};
+  for (const t of (d.trades || [])) {
+    const a = t.asset;
+    byAsset[a] = byAsset[a] || { n: 0, net: 0 };
+    byAsset[a].n += 1;
+    byAsset[a].net += num(t.est_net_usd);
+  }
+  if (typeof Chart !== "undefined" && !window.__chartFailed && assets.length) {
+    chart("c-asset", {
+      type: "bar",
+      data: { labels: assets, datasets: [
+        { label: "trades", data: assets.map(a => (byAsset[a] || {}).n || 0),
+          backgroundColor: "rgba(88,166,255,.55)", yAxisID: "y", borderRadius: 4 },
+        { label: "est net USD", data: assets.map(a => +(((byAsset[a] || {}).net || 0).toFixed(4))),
+          backgroundColor: assets.map(a => ((byAsset[a] || {}).net || 0) >= 0 ? "rgba(63,185,80,.65)" : "rgba(248,81,73,.65)"),
+          yAxisID: "y2", borderRadius: 4 }]},
+      options: { animation: false,
+        plugins: { legend: { labels: { boxWidth: 10 } } },
+        scales: { y:  { position: "left",  title: { display: true, text: "trades" }, ticks: { precision: 0 } },
+                  y2: { position: "right", title: { display: true, text: "est net $" }, grid: { drawOnChartArea: false } } } }
+    });
+
+    // net bps histogram
+    const bpss = (d.trades || []).map(t => num(t.net_bps));
+    let bins = [], counts = [];
+    if (bpss.length) {
+      const lo = Math.floor(Math.min(...bpss) / 10) * 10;
+      const hi = Math.ceil(Math.max(...bpss) / 10) * 10;
+      for (let b = lo; b < hi + 10; b += 10) { bins.push(b); counts.push(0); }
+      for (const x of bpss) {
+        let i = Math.floor((x - lo) / 10);
+        counts[Math.max(0, Math.min(i, counts.length - 1))]++;
+      }
+    }
+    chart("c-bps", {
+      type: "bar",
+      data: { labels: bins.map(b => b + "…"), datasets: [{ data: counts,
+        backgroundColor: bins.map(b => b >= 0 ? "rgba(63,185,80,.65)" : "rgba(248,81,73,.65)"), borderRadius: 4 }]},
+      options: { animation: false, plugins: { legend: { display: false } },
+        scales: { y: { ticks: { precision: 0 }, title: { display: true, text: "trades" } },
+                  x: { title: { display: true, text: "net spread bps (bucket)" } } } }
+    });
+  }
+}
+
+function renderVenues(d){
+  const assets = d.assets || [];
+  const prices = d.last_prices || {};
+  const fmtQ = {ETH: 6, BTC: 8, XRP: 2, SOL: 4};
+  let html = "";
+  for (const [name, v] of Object.entries(d.venues)) {
+    const coins = assets.map(a => {
+      const q = (v.coins || {})[a] || 0;
+      const val = q * (prices[a] || 0);
+      return `${a} <b>${q.toFixed(fmtQ[a] ?? 4)}</b> (${money(val)})`;
+    }).join(" · ");
+    html += `<tr><td>${venueTag(name)}</td><td class="${v.cash >= 0 ? "" : "neg"}">${money(v.cash)}</td><td>${coins || "—"}</td></tr>`;
+  }
+  $("venues").innerHTML = html || `<tr><td colspan="3" class="empty">no data</td></tr>`;
+}
+
+function renderTrades(d){
+  const fa = $("f-asset"), fs = $("f-search"), fp = $("f-prof");
+  if (!fa.options.length || fa.options.length - 1 !== d.assets.length) {
+    const cur = fa.value;
+    fa.innerHTML = `<option value="">All assets</option>` +
+      d.assets.map(a => `<option value="${a}">${a}</option>`).join("");
+    fa.value = cur;
+  }
+  const q = fs.value.toLowerCase();
+  const rows = (d.trades || []).filter(t =>
+      (!fa.value || t.asset === fa.value) &&
+      (!fp.checked || num(t.est_net_usd) > 0) &&
+      (!q || JSON.stringify(t).toLowerCase().includes(q)));
+
+  const fmtQ = {ETH: 6, BTC: 8, XRP: 4, SOL: 4};
+  $("trades").innerHTML = rows.map(t => {
+    const net = num(t.est_net_usd);
+    return `<tr>
+      <td>${t.time}</td>
+      <td><b>${t.asset}</b></td>
+      <td>${venueTag(t.buy_venue)} @ ${num(t.buy_price).toLocaleString("en-US",{maximumFractionDigits:6})}
+          → ${venueTag(t.sell_venue)} @ ${num(t.sell_price).toLocaleString("en-US",{maximumFractionDigits:6})}</td>
+      <td>${num(t.gross_bps).toFixed(2)} bps</td>
+      <td class="${cls(num(t.net_bps))}">${num(t.net_bps).toFixed(2)} bps</td>
+      <td>${money(num(t.size_usd))}</td>
+      <td>${num(t.coin_amount).toFixed(fmtQ[t.asset] ?? 6)}</td>
+      <td class="pill ${net >= 0 ? "g" : "r"}">${money4(net)}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="8" class="empty">no trades match the filter — the scanner only trades when the net spread (after both taker fees) clears the threshold in config.json</td></tr>`;
+  $("f-count").textContent = `${rows.length} shown / ${(d.trades || []).length} stored`;
+}
+
+let lastFetchOk = true;
+async function refresh(){
+  try {
+    const d = await (await fetch("/api/state", {cache: "no-store"})).json();
+    lastFetchOk = true;
+    window.__DATA = d;
+    renderKPIs(d); renderCharts(d); renderVenues(d); renderTrades(d);
+  } catch (e) {
+    lastFetchOk = false;
+    $("updated").textContent = "waiting for scanner…";
+  }
+}
+setInterval(() => { refresh(); }, 5000);
+setInterval(() => {
+  const d = window.__DATA;
+  if (d) { $("uptime").textContent = uptimeStr(d.started_at);
+           $("tick").textContent = lastFetchOk ? "(live, 5s auto-refresh)" : ""; }
+}, 1000);
+refresh();
+</script>
+</body>
+</html>

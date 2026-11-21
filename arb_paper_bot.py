@@ -17,29 +17,38 @@ configured minimum), it "executes" a PAPER trade:
   * coin inventory on the sell venue is sold
   * the net USD result is booked into your paper ledger
 
+While it runs, a local DASHBOARD is served (loopback only) at:
+
+    http://127.0.0.1:8899
+
+with live charts of portfolio value / realized profit, per-asset and venue
+breakdowns and the full paper trades ledger.
+
 Nothing ever leaves your laptop. There is NO code path that can move real
 money: a real-payments "live" mode is intentionally not implemented (see
 README, "Going live").
 
 Usage
 -----
-    python3 arb_paper_bot.py            # continuous scan (default 15s)
-    python3 arb_paper_bot.py --once     # single scan, print, exit
+    python3 arb_paper_bot.py                 # scan loop + dashboard on 127.0.0.1:8899
+    python3 arb_paper_bot.py --once          # single scan, print, exit (no dashboard)
+    python3 arb_paper_bot.py --no-dashboard  # scan loop without the web dashboard
     python3 arb_paper_bot.py --config my_config.json
 
 Files
 -----
     config.json       settings (venues, fees, sizes — edit freely)
-    paper_state.json  paper balances + stats (auto-created, persists restarts)
+    dashboard.html    the web dashboard (served at http://127.0.0.1:8899)
+    paper_state.json  paper balances + equity history (auto-created, persists)
     paper_trades.csv  append-only trade log (auto-created)
 """
 
 import argparse
 import csv
+import http.server
 import json
 import os
-import socket
-import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -60,7 +69,11 @@ DEFAULT_CONFIG = {
     "state_file": "paper_state.json",
     "trades_log": "paper_trades.csv",
     "http_timeout_seconds": 8,
-    "quote_max_age_seconds": 30
+    "quote_max_age_seconds": 30,
+    "dashboard_enabled": True,
+    "dashboard_host": "127.0.0.1",
+    "dashboard_port": 8899,
+    "history_max_points": 2000
 }
 
 ASSET_USDT = {"ETH": "ETHUSDT", "BTC": "BTCUSDT", "XRP": "XRPUSDT", "SOL": "SOLUSDT"}
@@ -68,6 +81,8 @@ ASSET_COINBASE = {"ETH": "ETH-USD", "BTC": "BTC-USD", "XRP": "XRP-USD", "SOL": "
 ASSET_KRAKEN = {"ETH": "ETHUSD", "BTC": "XBTUSD", "XRP": "XRPUSD", "SOL": "SOLUSD"}
 KRAKEN_BASE = {"ETH": "ETH", "BTC": "XBT", "XRP": "XRP", "SOL": "SOL"}
 ASSET_OKX = {"ETH": "ETH-USDT", "BTC": "BTC-USDT", "XRP": "XRP-USDT", "SOL": "SOL-USDT"}
+
+STATE_LOCK = threading.Lock()
 
 
 def now_iso():
@@ -189,6 +204,7 @@ def load_state(cfg, assets):
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             state = json.load(f)
+        state.setdefault("history", [])
         for a in assets:
             for v in state["venues"].values():
                 v["coins"].setdefault(a, 0.0)
@@ -210,6 +226,7 @@ def load_state(cfg, assets):
             "trades": 0,
             "realized_net_usd": 0.0
         },
+        "history": [],
         "last_prices": {}
     }
     save_state(cfg, state)
@@ -236,6 +253,17 @@ def append_trade_row(cfg, row):
         w.writerow(row)
 
 
+def read_trades_csv(cfg, limit=500, assets=None):
+    path = os.path.join(HERE, cfg["trades_log"])
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if assets:
+        rows = [r for r in rows if r.get("asset") in assets]
+    return list(reversed(rows))[-limit:]
+
+
 def seed_inventory_if_needed(state, cfg, venue, asset, price):
     v = state["venues"][venue]
     if v["seeded"].get(asset):
@@ -243,6 +271,29 @@ def seed_inventory_if_needed(state, cfg, venue, asset, price):
     qty = float(cfg["coin_seed_usd"]) / price
     v["coins"][asset] = max(v["coins"][asset], qty)
     v["seeded"][asset] = True
+
+
+def portfolio_value(state):
+    total = sum(v["cash"] for v in state["venues"].values())
+    for a, price in state.get("last_prices", {}).items():
+        qty = sum(v["coins"].get(a, 0.0) for v in state["venues"].values())
+        total += qty * price
+    return total
+
+
+def record_history(cfg, state):
+    hist = state.setdefault("history", [])
+    s = state["stats"]
+    hist.append({
+        "t": now_iso(),
+        "value": portfolio_value(state),
+        "net": s["realized_net_usd"],
+        "scans": s["scans"],
+        "trades": s["trades"]
+    })
+    cap = int(cfg["history_max_points"])
+    if len(hist) > cap:
+        del hist[:len(hist) - cap]
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +369,6 @@ def paper_trade(cfg, state, asset, buy_venue, sell_venue, ask, bid,
     buy_frac = cfg["taker_fees_bps"].get(buy_venue, 0) / 1e4
     sell_frac = cfg["taker_fees_bps"].get(sell_venue, 0) / 1e4
 
-    coin_needed = size_usd * (1 - buy_frac) / ask
     inventory_value = sell["coins"][asset] * bid
     size_usd = min(size_usd, buy["cash"], inventory_value * (1 - buy_frac))
     if size_usd <= 1.0:
@@ -340,7 +390,6 @@ def paper_trade(cfg, state, asset, buy_venue, sell_venue, ask, bid,
         f"{gross_bps:.2f}", f"{net_bps:.2f}", f"{size_usd:.2f}",
         f"{coin_needed:.8f}", f"{est_net_usd:.4f}"
     ])
-    save_state(cfg, state)
     return (f"TRADE ${size_usd:,.2f} -> "
             f"{'+' if est_net_usd >= 0 else '-'}${abs(est_net_usd):.4f} (paper)")
 
@@ -379,12 +428,84 @@ def print_portfolio(cfg, state, assets):
 
 
 # ---------------------------------------------------------------------------
+# Local dashboard (loopback-only web server)
+# ---------------------------------------------------------------------------
+
+def build_api_payload(cfg, assets, state):
+    return {
+        "now": now_iso(),
+        "mode": "PAPER — no real-money code path in this build",
+        "started_at": state["started_at"],
+        "assets": assets,
+        "fees_bps": cfg["taker_fees_bps"],
+        "venues": {name: {"cash": v["cash"], "coins": v["coins"]}
+                   for name, v in state["venues"].items()},
+        "last_prices": state.get("last_prices", {}),
+        "stats": state["stats"],
+        "history": state.get("history", []),
+        "trades": read_trades_csv(cfg, limit=1000, assets=assets)
+    }
+
+
+class DashboardHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path in ("/", "/index.html", "/dashboard.html"):
+            self._serve_file(os.path.join(HERE, "dashboard.html"),
+                             "text/html; charset=utf-8")
+        elif path == "/api/state":
+            with STATE_LOCK:
+                payload = build_api_payload(self.server.cfg, self.server.assets,
+                                            self.server.state)
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_error(404)
+
+    def _serve_file(self, path, ctype):
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except FileNotFoundError:
+            self.send_error(404, "dashboard.html missing")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def start_dashboard(cfg, assets, state):
+    host = cfg.get("dashboard_host", "127.0.0.1")
+    port = int(cfg.get("dashboard_port", 8899))
+    try:
+        srv = http.server.ThreadingHTTPServer((host, port), DashboardHandler)
+    except OSError as e:
+        log(f"dashboard: could not bind {host}:{port} ({e}) — continuing without it")
+        return None
+    srv.cfg, srv.assets, srv.state = cfg, assets, state
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(description="paper arbitrage scanner (real data, no real money)")
     ap.add_argument("--once", action="store_true", help="single scan then exit")
+    ap.add_argument("--no-dashboard", action="store_true", help="disable the local web dashboard")
     ap.add_argument("--config", default=os.path.join(HERE, "config.json"))
     args = ap.parse_args()
 
@@ -401,13 +522,24 @@ def main():
     print("  everything is simulated in paper_state.json — Ctrl+C any time")
     print("=" * 88, flush=True)
 
+    dashboard = None
+    if not args.once and cfg["dashboard_enabled"] and not args.no_dashboard:
+        dashboard = start_dashboard(cfg, assets, state)
+        if dashboard:
+            log(f"DASHBOARD live at http://{cfg['dashboard_host']}:"
+                f"{cfg['dashboard_port']}  (loopback only — never exposed)")
+        else:
+            log("dashboard: disabled this run")
+
     try:
         while True:
             try:
                 rows = run_scan(cfg, assets, state)
                 print_rows(rows)
                 print_portfolio(cfg, state, assets)
-                save_state(cfg, state)
+                with STATE_LOCK:
+                    record_history(cfg, state)
+                    save_state(cfg, state)
             except KeyboardInterrupt:
                 raise
             except Exception as e:
@@ -418,6 +550,9 @@ def main():
             time.sleep(cfg["poll_interval_seconds"])
     except KeyboardInterrupt:
         pass
+    finally:
+        if dashboard:
+            dashboard.shutdown()
 
     print("\n" + "=" * 88)
     print("  SESSION SUMMARY (paper)")

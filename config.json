@@ -15,5 +15,9 @@
   "state_file": "paper_state.json",
   "trades_log": "paper_trades.csv",
   "http_timeout_seconds": 8,
-  "quote_max_age_seconds": 30
+  "quote_max_age_seconds": 30,
+  "dashboard_enabled": true,
+  "dashboard_host": "127.0.0.1",
+  "dashboard_port": 8899,
+  "history_max_points": 2000
 }
