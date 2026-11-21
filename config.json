@@ -1,0 +1,19 @@
+{
+  "mode": "paper",
+  "assets": ["ETH", "BTC", "XRP", "SOL"],
+  "poll_interval_seconds": 15,
+  "trade_size_usd": 100,
+  "min_net_spread_bps": 5,
+  "taker_fees_bps": {
+    "binance": 10,
+    "coinbase": 60,
+    "kraken": 26,
+    "okx": 10
+  },
+  "starting_cash_per_venue_usd": 1000,
+  "coin_seed_usd": 100,
+  "state_file": "paper_state.json",
+  "trades_log": "paper_trades.csv",
+  "http_timeout_seconds": 8,
+  "quote_max_age_seconds": 30
+}
